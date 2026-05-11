@@ -14,7 +14,6 @@ let audioCtx = null;
 let analyser = null;
 let source = null;
 let animFrameId = null;
-let isAudioContextReady = false;
 
 const DEV_NAME = 'almajidnafi';
 const DEV_PASS = 'Rantauprapat123';
@@ -41,9 +40,14 @@ const visualizerWrap = document.getElementById('visualizer-wrap');
 const btnPlayPause = document.getElementById('btn-play-pause');
 const volSlider = document.getElementById('volume-slider');
 
-// Pastikan volume tidak 0
+// Set volume awal ke 70%
 audio.volume = 0.7;
 volSlider.value = 70;
+updateVolumeBackground(70);
+
+function updateVolumeBackground(val) {
+  volSlider.style.background = `linear-gradient(to right, var(--accent) 0%, var(--accent) ${val}%, var(--surface2) ${val}%)`;
+}
 
 // ── Visualizer Setup ──
 const BAR_COUNT = 28;
@@ -56,49 +60,22 @@ for (let i = 0; i < BAR_COUNT; i++) {
   visBars.push(bar);
 }
 
-// ── Audio Context & Visualizer ──
-async function initAudioCtx() {
-  if (audioCtx && isAudioContextReady) return;
-  
-  try {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 128;
-    
-    // Hanya buat source jika audio belum memiliki source
-    if (!source && audio.src) {
-      source = audioCtx.createMediaElementSource(audio);
-      source.connect(analyser);
-      analyser.connect(audioCtx.destination);
+// ── VISUALIZER TANPA AUDIOCONTEXT (simple) ──
+function drawSimpleVisualizer() {
+  if (!isPlaying) {
+    for (let i = 0; i < BAR_COUNT; i++) {
+      visBars[i].style.height = '3px';
     }
-    isAudioContextReady = true;
-    console.log("AudioContext initialized");
-  } catch (e) {
-    console.error("Failed to init AudioContext:", e);
-  }
-}
-
-async function resumeAudioContext() {
-  if (audioCtx && audioCtx.state === 'suspended') {
-    await audioCtx.resume();
-    console.log("AudioContext resumed");
-  }
-}
-
-function drawVisualizer() {
-  if (!analyser) {
-    animFrameId = requestAnimationFrame(drawVisualizer);
+    animFrameId = requestAnimationFrame(drawSimpleVisualizer);
     return;
   }
-  const data = new Uint8Array(analyser.frequencyBinCount);
-  analyser.getByteFrequencyData(data);
+  
+  // Animasi random untuk visualizer saat lagu diputar
   for (let i = 0; i < BAR_COUNT; i++) {
-    const idx = Math.floor(i * data.length / BAR_COUNT);
-    const val = data[idx] || 0;
-    const h = Math.max(3, (val / 255) * 42);
-    visBars[i].style.height = h + 'px';
+    const randomHeight = 3 + Math.random() * 40;
+    visBars[i].style.height = randomHeight + 'px';
   }
-  animFrameId = requestAnimationFrame(drawVisualizer);
+  animFrameId = requestAnimationFrame(drawSimpleVisualizer);
 }
 
 // ── Helper Functions ──
@@ -127,11 +104,10 @@ async function loadSongs() {
     if (error) throw error;
     songs = data || [];
     renderPlaylist();
+    console.log("Lagu dimuat:", songs.length);
     
-    // Debug: tampilkan daftar lagu ke console
-    console.log("Songs loaded:", songs);
     if (songs.length === 0) {
-      toast("Belum ada lagu. Klik Add Music untuk upload!");
+      toast("📁 Belum ada lagu. Klik Add Music untuk upload MP3!");
     }
   } catch (e) {
     console.error(e);
@@ -202,28 +178,32 @@ function escapeHtml(str) {
   });
 }
 
-// ── Play Song with proper audio handling ──
+// ── MAIN PLAY FUNCTION (DIRECT, TANPA AUDIOCONTEXT DULU) ──
 async function playSong(idx) {
   if (idx < 0 || idx >= songs.length) return;
   
   currentIndex = idx;
   const song = songs[idx];
   
-  // Cek apakah audio_url valid
   if (!song.audio_url) {
     toast("❌ File audio tidak ditemukan!");
-    console.error("No audio_url for song:", song);
+    console.error("No audio_url:", song);
     return;
   }
   
-  console.log("Playing song:", song.title, "URL:", song.audio_url);
+  console.log("Memutar:", song.title, "URL:", song.audio_url);
   
-  // Set source audio
+  // Hentikan audio yang sedang berjalan
+  audio.pause();
+  
+  // Set source baru
   audio.src = song.audio_url;
   audio.volume = volSlider.value / 100;
+  
+  // Load audio
   audio.load();
   
-  // Update cover & background
+  // Update tampilan cover
   if (song.cover_url) {
     coverImg.src = song.cover_url;
     coverImg.style.display = 'block';
@@ -238,36 +218,33 @@ async function playSong(idx) {
   songTitle.textContent = song.title;
   songArtist.textContent = song.artist || '—';
   
-  // Tunggu audio siap
-  await new Promise(resolve => {
-    if (audio.readyState >= 2) resolve();
-    else audio.addEventListener('canplay', resolve, { once: true });
-  });
-  
-  // Inisialisasi AudioContext
-  await initAudioCtx();
-  await resumeAudioContext();
-  
-  // Reconnect source jika diperlukan (karena src berubah)
-  if (audioCtx && !source) {
-    source = audioCtx.createMediaElementSource(audio);
-    source.connect(analyser);
-    analyser.connect(audioCtx.destination);
-  }
-  
-  // Mainkan audio
-  try {
-    await audio.play();
-    setPlayState(true);
-    toast(`🎵 Memutar: ${song.title}`);
-  } catch (err) {
-    console.error("Play error:", err);
-    toast("⚠️ Klik tombol play untuk memutar (interaksi user diperlukan)");
-    setPlayState(false);
-  }
-  
   renderPlaylist();
-  if (!animFrameId) drawVisualizer();
+  
+  // Tunggu audio siap lalu play
+  audio.oncanplay = async () => {
+    try {
+      // Reset AudioContext jika perlu
+      if (audioCtx) {
+        if (audioCtx.state === 'suspended') {
+          await audioCtx.resume();
+        }
+      }
+      
+      await audio.play();
+      setPlayState(true);
+      toast(`🎵 Memutar: ${song.title}`);
+    } catch (err) {
+      console.error("Play error:", err);
+      toast("⚠️ Klik tombol play (browser membutuhkan interaksi)");
+      setPlayState(false);
+    }
+  };
+  
+  // Error handling
+  audio.onerror = (e) => {
+    console.error("Audio error:", e);
+    toast("❌ Gagal memutar file audio. Coba upload ulang.");
+  };
 }
 
 function setPlayState(playing) {
@@ -283,6 +260,8 @@ function setPlayState(playing) {
     coverDisc.classList.remove('spinning');
     coverRing.classList.remove('spinning');
   }
+  
+  // Update class di playlist
   document.querySelectorAll('.playlist-item').forEach((el, i) => {
     if (i === currentIndex) {
       if (!playing) el.classList.add('paused');
@@ -302,13 +281,16 @@ btnPlayPause.addEventListener('click', async () => {
     audio.pause();
     setPlayState(false);
   } else {
-    await resumeAudioContext();
     try {
+      // Coba resume AudioContext
+      if (audioCtx && audioCtx.state === 'suspended') {
+        await audioCtx.resume();
+      }
       await audio.play();
       setPlayState(true);
     } catch (err) {
-      console.error("Play resume error:", err);
-      toast("Klik play lagi untuk memutar");
+      console.error("Resume error:", err);
+      toast("Klik sekali lagi untuk memutar");
     }
   }
 });
@@ -354,10 +336,14 @@ audio.addEventListener('ended', async () => {
 
 // Progress bar update
 audio.addEventListener('timeupdate', () => {
-  if (!audio.duration) return;
+  if (!audio.duration || isNaN(audio.duration)) return;
   const pct = (audio.currentTime / audio.duration) * 100;
   progressFill.style.width = pct + '%';
   timeCurrent.textContent = fmt(audio.currentTime);
+  timeTotal.textContent = fmt(audio.duration);
+});
+
+audio.addEventListener('loadedmetadata', () => {
   timeTotal.textContent = fmt(audio.duration);
 });
 
@@ -371,17 +357,7 @@ progressBg.addEventListener('click', (e) => {
 volSlider.addEventListener('input', () => {
   const val = volSlider.value;
   audio.volume = val / 100;
-  volSlider.style.background = `linear-gradient(to right, var(--accent) 0%, var(--accent) ${val}%, var(--surface2) ${val}%)`;
-});
-
-// Debug audio events
-audio.addEventListener('error', (e) => {
-  console.error("Audio error:", e);
-  toast("❌ Gagal memutar audio. Cek file MP3.");
-});
-
-audio.addEventListener('canplay', () => {
-  console.log("Audio can play");
+  updateVolumeBackground(val);
 });
 
 // ── Login / Dashboard ──
@@ -405,6 +381,7 @@ document.getElementById('btn-login').addEventListener('click', () => {
     closeLogin();
     openDashboard();
     renderPlaylist();
+    toast("✅ Login berhasil");
   } else {
     document.getElementById('login-error').classList.add('show');
   }
@@ -534,25 +511,22 @@ async function deleteSong(id, idx) {
   await loadSongs();
 }
 
-// Resume audio context on user interaction (tap anywhere)
-document.body.addEventListener('click', async () => {
-  if (audioCtx && audioCtx.state === 'suspended') {
-    await resumeAudioContext();
-    console.log("AudioContext resumed by user interaction");
-  }
-}, { once: true });
-
-// Close modals on overlay click
+// Close modals
 document.getElementById('login-modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeLogin(); });
 document.getElementById('dashboard-modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeDashboard(); });
 
+// TEST: Buat elemen audio test untuk memastikan audio bisa diputar
+function testAudioPlayback() {
+  const testAudio = new Audio();
+  testAudio.volume = 0.5;
+  console.log("Audio API tersedia:", !!Audio);
+  toast("🎧 Klik lagu di playlist untuk memutar");
+}
+
 // Initialize
 loadSongs();
-drawVisualizer();
+drawSimpleVisualizer(); // Pake visualizer simple tanpa AudioContext
+testAudioPlayback();
 
-// Tampilkan pesan jika belum ada lagu
-setTimeout(() => {
-  if (songs.length === 0) {
-    toast("Belum ada lagu. Klik Add Music untuk upload MP3!");
-  }
-}, 1000);
+// Log untuk debugging
+console.log("Aplikasi siap, volume:", audio.volume);
