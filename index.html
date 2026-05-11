@@ -1,0 +1,1056 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My Playlist</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0f;
+      --surface: rgba(255,255,255,0.04);
+      --surface2: rgba(255,255,255,0.08);
+      --border: rgba(255,255,255,0.08);
+      --text: #f0f0f5;
+      --muted: rgba(240,240,245,0.45);
+      --accent: #c8ff00;
+      --accent2: #00ffd2;
+      --danger: #ff4d6d;
+      --radius: 16px;
+      --cover-color: #1a1a2e;
+    }
+
+    html, body {
+      width: 100%; height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Outfit', sans-serif;
+      overflow: hidden;
+    }
+
+    /* BG BLUR LAYER */
+    #bg-blur {
+      position: fixed; inset: 0; z-index: 0;
+      background-size: cover; background-position: center;
+      filter: blur(80px) saturate(1.4) brightness(0.3);
+      transition: background-image 0.8s ease;
+      transform: scale(1.1);
+    }
+    #bg-overlay {
+      position: fixed; inset: 0; z-index: 1;
+      background: linear-gradient(135deg, rgba(10,10,15,0.75) 0%, rgba(10,10,15,0.6) 100%);
+    }
+
+    /* LAYOUT */
+    #app {
+      position: relative; z-index: 2;
+      display: flex; width: 100vw; height: 100vh;
+    }
+
+    /* SIDEBAR */
+    #sidebar {
+      width: 280px; min-width: 280px;
+      height: 100vh;
+      display: flex; flex-direction: column;
+      border-right: 1px solid var(--border);
+      background: rgba(10,10,15,0.6);
+      backdrop-filter: blur(20px);
+      overflow: hidden;
+    }
+
+    #sidebar-header {
+      padding: 28px 24px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+
+    .logo {
+      font-family: 'Space Mono', monospace;
+      font-size: 13px; font-weight: 700;
+      letter-spacing: 0.15em; text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    #playlist-count {
+      font-size: 12px; color: var(--muted);
+      font-family: 'Space Mono', monospace;
+    }
+
+    #playlist-container {
+      flex: 1; overflow-y: auto;
+      padding: 12px 0;
+    }
+
+    #playlist-container::-webkit-scrollbar { width: 3px; }
+    #playlist-container::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .playlist-item {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 20px; cursor: pointer;
+      transition: background 0.2s;
+      position: relative;
+    }
+    .playlist-item:hover { background: var(--surface); }
+    .playlist-item.active { background: var(--surface2); }
+    .playlist-item.active::before {
+      content: ''; position: absolute; left: 0; top: 0; bottom: 0;
+      width: 3px; background: var(--accent); border-radius: 0 2px 2px 0;
+    }
+
+    .playlist-thumb {
+      width: 42px; height: 42px; border-radius: 8px;
+      background: var(--surface2); flex-shrink: 0;
+      object-fit: cover; overflow: hidden;
+    }
+    .playlist-thumb img { width: 100%; height: 100%; object-fit: cover; border-radius: 8px; }
+    .playlist-thumb-placeholder {
+      width: 42px; height: 42px; border-radius: 8px;
+      background: var(--surface2); flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    .playlist-info { flex: 1; min-width: 0; }
+    .playlist-title {
+      font-size: 13px; font-weight: 500;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      color: var(--text);
+    }
+    .playlist-artist {
+      font-size: 11px; color: var(--muted); margin-top: 2px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .playlist-duration {
+      font-size: 11px; color: var(--muted);
+      font-family: 'Space Mono', monospace;
+    }
+
+    .playing-wave {
+      display: none; align-items: flex-end; gap: 2px; height: 16px;
+    }
+    .active .playing-wave { display: flex; }
+    .active .playlist-duration { display: none; }
+    .wave-bar {
+      width: 3px; background: var(--accent); border-radius: 2px;
+      animation: wave-bounce 0.6s ease-in-out infinite alternate;
+    }
+    .wave-bar:nth-child(1) { height: 6px; animation-delay: 0s; }
+    .wave-bar:nth-child(2) { height: 12px; animation-delay: 0.15s; }
+    .wave-bar:nth-child(3) { height: 8px; animation-delay: 0.3s; }
+    .wave-bar:nth-child(4) { height: 14px; animation-delay: 0.1s; }
+    @keyframes wave-bounce { from { transform: scaleY(0.4); } to { transform: scaleY(1); } }
+    .paused .wave-bar { animation-play-state: paused; }
+
+    /* MAIN PLAYER */
+    #main {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 32px; position: relative;
+    }
+
+    #player-card {
+      display: flex; flex-direction: column; align-items: center;
+      width: 100%; max-width: 420px;
+    }
+
+    /* COVER SPINNING */
+    #cover-wrap {
+      position: relative; margin-bottom: 36px;
+    }
+    #cover-ring {
+      width: 240px; height: 240px; border-radius: 50%;
+      border: 3px solid rgba(255,255,255,0.06);
+      position: absolute; inset: -12px;
+      animation: spin-slow 20s linear infinite;
+      animation-play-state: paused;
+    }
+    #cover-ring.spinning { animation-play-state: running; }
+
+    #cover-disc {
+      width: 220px; height: 220px; border-radius: 50%;
+      overflow: hidden; position: relative;
+      box-shadow: 0 8px 60px rgba(0,0,0,0.7), 0 0 0 2px rgba(255,255,255,0.06);
+      animation: spin-slow 20s linear infinite;
+      animation-play-state: paused;
+      background: var(--cover-color);
+    }
+    #cover-disc.spinning { animation-play-state: running; }
+
+    #cover-img {
+      width: 100%; height: 100%; object-fit: cover;
+      display: block;
+    }
+    #cover-placeholder {
+      width: 100%; height: 100%;
+      display: flex; align-items: center; justify-content: center;
+      background: linear-gradient(135deg, #1a1a2e, #16213e);
+    }
+
+    @keyframes spin-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+    /* SONG INFO */
+    #song-title {
+      font-size: 22px; font-weight: 700;
+      text-align: center; letter-spacing: -0.02em;
+      margin-bottom: 6px;
+    }
+    #song-artist {
+      font-size: 14px; color: var(--muted);
+      text-align: center; margin-bottom: 32px;
+      font-weight: 400;
+    }
+
+    /* PROGRESS */
+    #progress-wrap {
+      width: 100%; margin-bottom: 24px;
+    }
+    #progress-bar-bg {
+      width: 100%; height: 4px; background: var(--surface2);
+      border-radius: 2px; cursor: pointer; position: relative;
+    }
+    #progress-bar-fill {
+      height: 100%; background: var(--accent);
+      border-radius: 2px; width: 0%;
+      transition: width 0.1s linear;
+      position: relative;
+    }
+    #progress-bar-fill::after {
+      content: ''; position: absolute; right: -5px; top: -4px;
+      width: 12px; height: 12px; border-radius: 50%;
+      background: var(--accent); box-shadow: 0 0 10px var(--accent);
+    }
+    #time-labels {
+      display: flex; justify-content: space-between;
+      margin-top: 10px; font-size: 11px; color: var(--muted);
+      font-family: 'Space Mono', monospace;
+    }
+
+    /* CONTROLS */
+    #controls {
+      display: flex; align-items: center; justify-content: center;
+      gap: 20px; margin-bottom: 28px;
+    }
+
+    .ctrl-btn {
+      background: none; border: none; cursor: pointer;
+      color: var(--muted); transition: color 0.2s, transform 0.15s;
+      display: flex; align-items: center; justify-content: center;
+      padding: 8px; border-radius: 50%;
+    }
+    .ctrl-btn:hover { color: var(--text); transform: scale(1.1); }
+    .ctrl-btn.active-mode { color: var(--accent); }
+
+    #btn-play-pause {
+      width: 60px; height: 60px;
+      background: var(--accent); color: #0a0a0f;
+      border-radius: 50%; border: none; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 0 30px rgba(200,255,0,0.3);
+      transition: transform 0.15s, box-shadow 0.2s;
+    }
+    #btn-play-pause:hover {
+      transform: scale(1.06);
+      box-shadow: 0 0 40px rgba(200,255,0,0.5);
+    }
+
+    /* VOLUME */
+    #volume-wrap {
+      display: flex; align-items: center; gap: 10px; width: 100%;
+    }
+    #volume-wrap svg { color: var(--muted); flex-shrink: 0; }
+    #volume-slider {
+      flex: 1; -webkit-appearance: none; appearance: none;
+      height: 4px; border-radius: 2px;
+      background: linear-gradient(to right, var(--accent) 0%, var(--accent) 70%, var(--surface2) 70%);
+      outline: none; cursor: pointer;
+    }
+    #volume-slider::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 14px; height: 14px;
+      border-radius: 50%; background: var(--accent); cursor: pointer;
+    }
+
+    /* VISUALIZER */
+    #visualizer-wrap {
+      position: absolute; bottom: 80px; left: 50%;
+      transform: translateX(-50%);
+      display: flex; align-items: flex-end; gap: 2px; height: 50px;
+      opacity: 0.5;
+    }
+    .vis-bar {
+      width: 4px; background: var(--accent2);
+      border-radius: 2px 2px 0 0;
+      min-height: 4px;
+      transition: height 0.05s ease;
+    }
+
+    /* ADD MUSIC BTN */
+    #btn-add-music {
+      position: fixed; top: 20px; right: 24px; z-index: 100;
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text); padding: 9px 18px;
+      border-radius: 30px; cursor: pointer;
+      font-family: 'Outfit', sans-serif; font-size: 13px; font-weight: 500;
+      display: flex; align-items: center; gap: 8px;
+      backdrop-filter: blur(12px);
+      transition: background 0.2s, border-color 0.2s;
+    }
+    #btn-add-music:hover {
+      background: var(--accent); color: #0a0a0f;
+      border-color: var(--accent);
+    }
+
+    /* MODAL */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0; z-index: 200;
+      background: rgba(0,0,0,0.7); backdrop-filter: blur(8px);
+      align-items: center; justify-content: center;
+    }
+    .modal-overlay.open { display: flex; }
+
+    .modal {
+      background: #12121a; border: 1px solid var(--border);
+      border-radius: 20px; padding: 36px;
+      width: 100%; max-width: 400px;
+      box-shadow: 0 30px 80px rgba(0,0,0,0.6);
+      animation: modal-in 0.25s ease;
+    }
+    @keyframes modal-in { from { opacity: 0; transform: scale(0.95) translateY(10px); } to { opacity: 1; transform: none; } }
+
+    .modal-title {
+      font-size: 18px; font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .modal-sub { font-size: 13px; color: var(--muted); margin-bottom: 28px; }
+
+    .form-group { margin-bottom: 18px; }
+    .form-label { font-size: 12px; color: var(--muted); margin-bottom: 8px; display: block; font-weight: 500; letter-spacing: 0.05em; }
+    .form-input {
+      width: 100%; padding: 12px 16px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; color: var(--text);
+      font-family: 'Outfit', sans-serif; font-size: 14px;
+      outline: none; transition: border-color 0.2s;
+    }
+    .form-input:focus { border-color: var(--accent); }
+    .form-input[type="file"] { cursor: pointer; padding: 10px 16px; }
+
+    .btn-primary {
+      width: 100%; padding: 13px;
+      background: var(--accent); color: #0a0a0f;
+      border: none; border-radius: 10px;
+      font-family: 'Outfit', sans-serif; font-size: 14px; font-weight: 600;
+      cursor: pointer; transition: opacity 0.2s, transform 0.15s;
+      margin-top: 8px;
+    }
+    .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    .btn-secondary {
+      width: 100%; padding: 11px;
+      background: transparent; color: var(--muted);
+      border: 1px solid var(--border); border-radius: 10px;
+      font-family: 'Outfit', sans-serif; font-size: 13px;
+      cursor: pointer; margin-top: 10px;
+      transition: color 0.2s, border-color 0.2s;
+    }
+    .btn-secondary:hover { color: var(--text); border-color: var(--text); }
+
+    .error-msg {
+      color: var(--danger); font-size: 12px; margin-top: 12px;
+      text-align: center; display: none;
+    }
+    .error-msg.show { display: block; }
+
+    /* DASHBOARD */
+    #dashboard-modal .modal { max-width: 500px; }
+    .dashboard-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 24px;
+    }
+    .dashboard-title { font-size: 18px; font-weight: 700; }
+    .logout-btn {
+      background: none; border: 1px solid var(--border);
+      color: var(--muted); padding: 6px 14px; border-radius: 20px;
+      font-size: 12px; cursor: pointer; font-family: 'Outfit', sans-serif;
+      transition: color 0.2s, border-color 0.2s;
+    }
+    .logout-btn:hover { color: var(--danger); border-color: var(--danger); }
+
+    .upload-preview {
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px; background: var(--surface);
+      border-radius: 10px; margin-top: 12px;
+      font-size: 13px; color: var(--muted);
+    }
+    .upload-preview img { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; }
+
+    .status-msg {
+      text-align: center; font-size: 13px; margin-top: 14px;
+      color: var(--accent); display: none;
+    }
+    .status-msg.show { display: block; }
+
+    /* EMPTY STATE */
+    #empty-state {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; height: 100%; color: var(--muted);
+      gap: 12px; text-align: center;
+    }
+    #empty-state svg { opacity: 0.3; }
+    #empty-state p { font-size: 14px; }
+    #empty-state small { font-size: 12px; opacity: 0.6; }
+
+    /* LOADING */
+    .spinner {
+      width: 20px; height: 20px; border-radius: 50%;
+      border: 2px solid var(--border); border-top-color: var(--accent);
+      animation: spin 0.7s linear infinite; display: inline-block;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .loading-state {
+      display: flex; align-items: center; justify-content: center;
+      height: 200px; color: var(--muted); gap: 10px; font-size: 14px;
+    }
+
+    /* TOAST */
+    #toast {
+      position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+      background: #1e1e2a; border: 1px solid var(--border);
+      color: var(--text); padding: 12px 24px; border-radius: 30px;
+      font-size: 13px; z-index: 300; opacity: 0;
+      transition: opacity 0.3s, transform 0.3s;
+      pointer-events: none;
+    }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
+
+    /* DELETE btn in playlist */
+    .delete-song-btn {
+      background: none; border: none; color: var(--muted); cursor: pointer;
+      padding: 4px; border-radius: 4px; opacity: 0;
+      transition: opacity 0.2s, color 0.2s;
+      display: flex; flex-shrink: 0;
+    }
+    .playlist-item:hover .delete-song-btn { opacity: 1; }
+    .delete-song-btn:hover { color: var(--danger); }
+
+    /* Responsive narrow sidebar */
+    @media (max-width: 640px) {
+      #sidebar { width: 220px; min-width: 220px; }
+    }
+  </style>
+</head>
+<body>
+
+<div id="bg-blur"></div>
+<div id="bg-overlay"></div>
+
+<div id="app">
+  <!-- SIDEBAR PLAYLIST -->
+  <aside id="sidebar">
+    <div id="sidebar-header">
+      <span class="logo">Playlist</span>
+      <span id="playlist-count">0 lagu</span>
+    </div>
+    <div id="playlist-container">
+      <div class="loading-state"><div class="spinner"></div> Memuat...</div>
+    </div>
+  </aside>
+
+  <!-- MAIN PLAYER -->
+  <main id="main">
+    <div id="player-card">
+      <!-- DISC -->
+      <div id="cover-wrap">
+        <div id="cover-ring"></div>
+        <div id="cover-disc">
+          <div id="cover-placeholder">
+            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="1.5">
+              <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+            </svg>
+          </div>
+          <img id="cover-img" src="" alt="" style="display:none; position:absolute; inset:0;" />
+        </div>
+      </div>
+
+      <!-- SONG INFO -->
+      <div id="song-title">Pilih lagu untuk diputar</div>
+      <div id="song-artist">—</div>
+
+      <!-- PROGRESS -->
+      <div id="progress-wrap">
+        <div id="progress-bar-bg">
+          <div id="progress-bar-fill"></div>
+        </div>
+        <div id="time-labels">
+          <span id="time-current">0:00</span>
+          <span id="time-total">0:00</span>
+        </div>
+      </div>
+
+      <!-- CONTROLS -->
+      <div id="controls">
+        <button class="ctrl-btn" id="btn-shuffle" title="Acak">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/>
+            <polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/>
+          </svg>
+        </button>
+        <button class="ctrl-btn" id="btn-prev" title="Sebelumnya">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+            <polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <button id="btn-play-pause" title="Play/Pause">
+          <svg id="icon-play" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <svg id="icon-pause" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style="display:none"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+        </button>
+        <button class="ctrl-btn" id="btn-next" title="Berikutnya">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+            <polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <button class="ctrl-btn" id="btn-repeat" title="Ulang">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+            <polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- VOLUME -->
+      <div id="volume-wrap">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+        </svg>
+        <input type="range" id="volume-slider" min="0" max="100" value="70" />
+      </div>
+    </div>
+
+    <!-- VISUALIZER -->
+    <div id="visualizer-wrap" id="visualizer"></div>
+  </main>
+</div>
+
+<!-- ADD MUSIC BUTTON -->
+<button id="btn-add-music">
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+  </svg>
+  Add Music
+</button>
+
+<!-- LOGIN MODAL -->
+<div class="modal-overlay" id="login-modal">
+  <div class="modal">
+    <div class="modal-title">Developer Access</div>
+    <div class="modal-sub">Masuk untuk mengelola playlist</div>
+    <div class="form-group">
+      <label class="form-label">Nama Developer</label>
+      <input class="form-input" type="text" id="dev-name" placeholder="Masukkan nama developer" autocomplete="off" />
+    </div>
+    <div class="form-group">
+      <label class="form-label">Sandi Developer</label>
+      <input class="form-input" type="password" id="dev-pass" placeholder="Masukkan sandi" />
+    </div>
+    <div class="error-msg" id="login-error">Nama atau sandi salah.</div>
+    <button class="btn-primary" id="btn-login">Masuk</button>
+    <button class="btn-secondary" onclick="closeLogin()">Batal</button>
+  </div>
+</div>
+
+<!-- DASHBOARD MODAL -->
+<div class="modal-overlay" id="dashboard-modal">
+  <div class="modal">
+    <div class="dashboard-header">
+      <div class="dashboard-title">Dashboard</div>
+      <button class="logout-btn" onclick="logout()">Keluar</button>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Judul Lagu</label>
+      <input class="form-input" type="text" id="upload-title" placeholder="Judul lagu" />
+    </div>
+    <div class="form-group">
+      <label class="form-label">Nama Artis</label>
+      <input class="form-input" type="text" id="upload-artist" placeholder="Nama artis / penyanyi" />
+    </div>
+    <div class="form-group">
+      <label class="form-label">File MP3</label>
+      <input class="form-input" type="file" id="upload-mp3" accept="audio/mp3,audio/mpeg,audio/*" />
+    </div>
+    <div class="form-group">
+      <label class="form-label">Cover Lagu (opsional)</label>
+      <input class="form-input" type="file" id="upload-cover" accept="image/*" />
+      <div id="cover-preview-wrap" style="display:none;" class="upload-preview">
+        <img id="cover-preview-img" src="" alt="" />
+        <span id="cover-preview-name"></span>
+      </div>
+    </div>
+    <div class="error-msg" id="upload-error"></div>
+    <div class="status-msg" id="upload-status"></div>
+    <button class="btn-primary" id="btn-upload">
+      <span id="btn-upload-label">Upload Lagu</span>
+    </button>
+    <button class="btn-secondary" onclick="closeDashboard()">Tutup</button>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div id="toast"></div>
+
+<audio id="audio-player"></audio>
+
+<script>
+// ── Supabase ──
+const SUPABASE_URL = 'https://mqonelsoqyvrasrzrzfl.supabase.co';
+const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xb25lbHNvcXl2cmFzcnpyemZsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU5NjEzOTQsImV4cCI6MjA4MTUzNzM5NH0.exHvN0BA3P71DcZbavZ0DMk8pUEpWQ6VCuH672wEdJ4';
+const { createClient } = supabase;
+const db = createClient(SUPABASE_URL, SUPABASE_ANON);
+
+// ── State ──
+let songs = [];
+let currentIndex = -1;
+let isPlaying = false;
+let isShuffle = false;
+let isRepeat = false;
+let shuffleQueue = [];
+let audioCtx, analyser, source, animFrameId;
+const DEV_NAME = 'almajidnafi';
+const DEV_PASS = 'Rantauprapat123';
+let isLoggedIn = false;
+
+const audio = document.getElementById('audio-player');
+const bgBlur = document.getElementById('bg-blur');
+const coverImg = document.getElementById('cover-img');
+const coverPlaceholder = document.getElementById('cover-placeholder');
+const coverDisc = document.getElementById('cover-disc');
+const coverRing = document.getElementById('cover-ring');
+const songTitle = document.getElementById('song-title');
+const songArtist = document.getElementById('song-artist');
+const progressFill = document.getElementById('progress-bar-fill');
+const progressBg = document.getElementById('progress-bar-bg');
+const timeCurrent = document.getElementById('time-current');
+const timeTotal = document.getElementById('time-total');
+const playlistContainer = document.getElementById('playlist-container');
+const playlistCount = document.getElementById('playlist-count');
+const iconPlay = document.getElementById('icon-play');
+const iconPause = document.getElementById('icon-pause');
+const visualizerWrap = document.getElementById('visualizer-wrap');
+const btnPlayPause = document.getElementById('btn-play-pause');
+
+// ── Visualizer bars setup ──
+const BAR_COUNT = 32;
+const visBars = [];
+for (let i = 0; i < BAR_COUNT; i++) {
+  const bar = document.createElement('div');
+  bar.className = 'vis-bar';
+  bar.style.height = '4px';
+  visualizerWrap.appendChild(bar);
+  visBars.push(bar);
+}
+
+function initAudioCtx() {
+  if (audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 128;
+  source = audioCtx.createMediaElementSource(audio);
+  source.connect(analyser);
+  analyser.connect(audioCtx.destination);
+}
+
+function drawVisualizer() {
+  if (!analyser) {
+    animFrameId = requestAnimationFrame(drawVisualizer);
+    return;
+  }
+  const data = new Uint8Array(analyser.frequencyBinCount);
+  analyser.getByteFrequencyData(data);
+  for (let i = 0; i < BAR_COUNT; i++) {
+    const idx = Math.floor(i * data.length / BAR_COUNT);
+    const val = data[idx];
+    const h = Math.max(4, (val / 255) * 50);
+    visBars[i].style.height = h + 'px';
+  }
+  animFrameId = requestAnimationFrame(drawVisualizer);
+}
+
+// ── Format time ──
+function fmt(s) {
+  if (!s || isNaN(s)) return '0:00';
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${sec.toString().padStart(2,'0')}`;
+}
+
+// ── Toast ──
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2800);
+}
+
+// ── Load songs from Supabase ──
+async function loadSongs() {
+  playlistContainer.innerHTML = '<div class="loading-state"><div class="spinner"></div> Memuat lagu...</div>';
+  try {
+    const { data, error } = await db
+      .from('songs')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    songs = data || [];
+    renderPlaylist();
+  } catch (e) {
+    playlistContainer.innerHTML = '<div class="loading-state">Gagal memuat. Cek koneksi.</div>';
+  }
+}
+
+// ── Render playlist ──
+function renderPlaylist() {
+  playlistCount.textContent = `${songs.length} lagu`;
+  if (songs.length === 0) {
+    playlistContainer.innerHTML = `
+      <div id="empty-state">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+        </svg>
+        <p>Playlist kosong</p>
+        <small>Tekan "Add Music" untuk menambahkan lagu</small>
+      </div>`;
+    return;
+  }
+  playlistContainer.innerHTML = '';
+  songs.forEach((song, idx) => {
+    const item = document.createElement('div');
+    item.className = 'playlist-item' + (idx === currentIndex ? ' active' + (!isPlaying ? ' paused' : '') : '');
+    item.dataset.idx = idx;
+
+    const thumbHtml = song.cover_url
+      ? `<div class="playlist-thumb"><img src="${song.cover_url}" alt="" loading="lazy" /></div>`
+      : `<div class="playlist-thumb-placeholder"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="1.5"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>`;
+
+    item.innerHTML = `
+      ${thumbHtml}
+      <div class="playlist-info">
+        <div class="playlist-title">${song.title}</div>
+        <div class="playlist-artist">${song.artist || '—'}</div>
+      </div>
+      <div class="playing-wave">
+        <div class="wave-bar"></div><div class="wave-bar"></div>
+        <div class="wave-bar"></div><div class="wave-bar"></div>
+      </div>
+      <span class="playlist-duration">${song.duration ? fmt(song.duration) : ''}</span>
+      ${isLoggedIn ? `<button class="delete-song-btn" data-id="${song.id}" title="Hapus"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg></button>` : ''}
+    `;
+    item.addEventListener('click', (e) => {
+      if (e.target.closest('.delete-song-btn')) return;
+      playSong(idx);
+    });
+    if (isLoggedIn) {
+      const delBtn = item.querySelector('.delete-song-btn');
+      if (delBtn) delBtn.addEventListener('click', () => deleteSong(song.id, idx));
+    }
+    playlistContainer.appendChild(item);
+  });
+}
+
+// ── Play song ──
+function playSong(idx) {
+  if (idx < 0 || idx >= songs.length) return;
+  currentIndex = idx;
+  const song = songs[idx];
+
+  audio.src = song.audio_url;
+  audio.volume = document.getElementById('volume-slider').value / 100;
+
+  // Cover
+  if (song.cover_url) {
+    coverImg.src = song.cover_url;
+    coverImg.style.display = 'block';
+    coverPlaceholder.style.display = 'none';
+    bgBlur.style.backgroundImage = `url(${song.cover_url})`;
+  } else {
+    coverImg.style.display = 'none';
+    coverPlaceholder.style.display = 'flex';
+    bgBlur.style.backgroundImage = 'none';
+  }
+
+  songTitle.textContent = song.title;
+  songArtist.textContent = song.artist || '—';
+
+  initAudioCtx();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  audio.play().then(() => {
+    setPlayState(true);
+  }).catch(() => setPlayState(false));
+
+  renderPlaylist();
+  if (!animFrameId) drawVisualizer();
+}
+
+function setPlayState(playing) {
+  isPlaying = playing;
+  if (playing) {
+    iconPlay.style.display = 'none';
+    iconPause.style.display = 'block';
+    coverDisc.classList.add('spinning');
+    coverRing.classList.add('spinning');
+  } else {
+    iconPlay.style.display = 'block';
+    iconPause.style.display = 'none';
+    coverDisc.classList.remove('spinning');
+    coverRing.classList.remove('spinning');
+  }
+  // Update active item paused class
+  document.querySelectorAll('.playlist-item').forEach((el, i) => {
+    if (i === currentIndex) {
+      el.classList.toggle('paused', !playing);
+    }
+  });
+}
+
+// ── Controls ──
+btnPlayPause.addEventListener('click', () => {
+  if (currentIndex === -1 && songs.length > 0) { playSong(0); return; }
+  if (isPlaying) { audio.pause(); setPlayState(false); }
+  else {
+    if (audioCtx) audioCtx.resume();
+    audio.play().then(() => setPlayState(true));
+  }
+});
+
+document.getElementById('btn-next').addEventListener('click', playNext);
+document.getElementById('btn-prev').addEventListener('click', playPrev);
+
+document.getElementById('btn-shuffle').addEventListener('click', () => {
+  isShuffle = !isShuffle;
+  document.getElementById('btn-shuffle').classList.toggle('active-mode', isShuffle);
+  toast(isShuffle ? 'Mode acak aktif' : 'Mode acak nonaktif');
+});
+
+document.getElementById('btn-repeat').addEventListener('click', () => {
+  isRepeat = !isRepeat;
+  document.getElementById('btn-repeat').classList.toggle('active-mode', isRepeat);
+  toast(isRepeat ? 'Mode ulang aktif' : 'Mode ulang nonaktif');
+});
+
+function playNext() {
+  if (songs.length === 0) return;
+  let next;
+  if (isShuffle) {
+    next = Math.floor(Math.random() * songs.length);
+  } else {
+    next = (currentIndex + 1) % songs.length;
+  }
+  playSong(next);
+}
+
+function playPrev() {
+  if (songs.length === 0) return;
+  if (audio.currentTime > 3) { audio.currentTime = 0; return; }
+  const prev = (currentIndex - 1 + songs.length) % songs.length;
+  playSong(prev);
+}
+
+audio.addEventListener('ended', () => {
+  if (isRepeat) { audio.currentTime = 0; audio.play(); }
+  else playNext();
+});
+
+// Progress
+audio.addEventListener('timeupdate', () => {
+  if (!audio.duration) return;
+  const pct = (audio.currentTime / audio.duration) * 100;
+  progressFill.style.width = pct + '%';
+  timeCurrent.textContent = fmt(audio.currentTime);
+  timeTotal.textContent = fmt(audio.duration);
+});
+
+progressBg.addEventListener('click', (e) => {
+  const rect = progressBg.getBoundingClientRect();
+  const pct = (e.clientX - rect.left) / rect.width;
+  audio.currentTime = pct * audio.duration;
+});
+
+// Volume
+const volSlider = document.getElementById('volume-slider');
+volSlider.addEventListener('input', () => {
+  audio.volume = volSlider.value / 100;
+  const pct = volSlider.value;
+  volSlider.style.background = `linear-gradient(to right, var(--accent) 0%, var(--accent) ${pct}%, var(--surface2) ${pct}%)`;
+});
+
+// ── Login ──
+document.getElementById('btn-add-music').addEventListener('click', () => {
+  if (isLoggedIn) { openDashboard(); }
+  else { document.getElementById('login-modal').classList.add('open'); }
+});
+
+function closeLogin() {
+  document.getElementById('login-modal').classList.remove('open');
+  document.getElementById('login-error').classList.remove('show');
+  document.getElementById('dev-name').value = '';
+  document.getElementById('dev-pass').value = '';
+}
+
+document.getElementById('btn-login').addEventListener('click', () => {
+  const name = document.getElementById('dev-name').value.trim();
+  const pass = document.getElementById('dev-pass').value;
+  if (name === DEV_NAME && pass === DEV_PASS) {
+    isLoggedIn = true;
+    closeLogin();
+    openDashboard();
+    renderPlaylist();
+  } else {
+    document.getElementById('login-error').classList.add('show');
+  }
+});
+
+document.getElementById('dev-pass').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('btn-login').click();
+});
+
+// ── Dashboard ──
+function openDashboard() {
+  document.getElementById('dashboard-modal').classList.add('open');
+}
+
+function closeDashboard() {
+  document.getElementById('dashboard-modal').classList.remove('open');
+  resetUploadForm();
+}
+
+function logout() {
+  isLoggedIn = false;
+  closeDashboard();
+  renderPlaylist();
+  toast('Berhasil keluar');
+}
+
+// Cover preview
+document.getElementById('upload-cover').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) { document.getElementById('cover-preview-wrap').style.display = 'none'; return; }
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    document.getElementById('cover-preview-img').src = ev.target.result;
+    document.getElementById('cover-preview-name').textContent = file.name;
+    document.getElementById('cover-preview-wrap').style.display = 'flex';
+  };
+  reader.readAsDataURL(file);
+});
+
+function resetUploadForm() {
+  ['upload-title','upload-artist'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('upload-mp3').value = '';
+  document.getElementById('upload-cover').value = '';
+  document.getElementById('cover-preview-wrap').style.display = 'none';
+  document.getElementById('upload-error').classList.remove('show');
+  document.getElementById('upload-status').classList.remove('show');
+  document.getElementById('btn-upload-label').textContent = 'Upload Lagu';
+  document.getElementById('btn-upload').disabled = false;
+}
+
+// ── Upload ──
+document.getElementById('btn-upload').addEventListener('click', async () => {
+  const title = document.getElementById('upload-title').value.trim();
+  const artist = document.getElementById('upload-artist').value.trim();
+  const mp3File = document.getElementById('upload-mp3').files[0];
+  const coverFile = document.getElementById('upload-cover').files[0];
+
+  const errEl = document.getElementById('upload-error');
+  errEl.classList.remove('show');
+
+  if (!title) { errEl.textContent = 'Judul lagu wajib diisi.'; errEl.classList.add('show'); return; }
+  if (!mp3File) { errEl.textContent = 'File MP3 wajib dipilih.'; errEl.classList.add('show'); return; }
+
+  const btn = document.getElementById('btn-upload');
+  btn.disabled = true;
+  document.getElementById('btn-upload-label').innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:8px;"></div> Mengupload...';
+
+  const statusEl = document.getElementById('upload-status');
+  statusEl.textContent = 'Mengupload file audio...';
+  statusEl.classList.add('show');
+
+  try {
+    // Upload MP3
+    const mp3Ext = mp3File.name.split('.').pop();
+    const mp3Path = `audio/${Date.now()}_${Math.random().toString(36).slice(2)}.${mp3Ext}`;
+    const { error: mp3Err } = await db.storage.from('songs').upload(mp3Path, mp3File, { contentType: mp3File.type });
+    if (mp3Err) throw new Error('Upload audio gagal: ' + mp3Err.message);
+
+    const { data: mp3Data } = db.storage.from('songs').getPublicUrl(mp3Path);
+    const audioUrl = mp3Data.publicUrl;
+
+    // Upload Cover (optional)
+    let coverUrl = null;
+    if (coverFile) {
+      statusEl.textContent = 'Mengupload cover lagu...';
+      const covExt = coverFile.name.split('.').pop();
+      const covPath = `covers/${Date.now()}_${Math.random().toString(36).slice(2)}.${covExt}`;
+      const { error: covErr } = await db.storage.from('songs').upload(covPath, coverFile, { contentType: coverFile.type });
+      if (!covErr) {
+        const { data: covData } = db.storage.from('songs').getPublicUrl(covPath);
+        coverUrl = covData.publicUrl;
+      }
+    }
+
+    // Insert record
+    statusEl.textContent = 'Menyimpan ke database...';
+    const { error: dbErr } = await db.from('songs').insert([{
+      title, artist: artist || null,
+      audio_url: audioUrl,
+      cover_url: coverUrl
+    }]);
+    if (dbErr) throw new Error('Simpan data gagal: ' + dbErr.message);
+
+    statusEl.textContent = 'Lagu berhasil ditambahkan!';
+    toast('Lagu berhasil ditambahkan');
+    resetUploadForm();
+    statusEl.classList.add('show');
+    await loadSongs();
+    setTimeout(() => { statusEl.classList.remove('show'); }, 3000);
+  } catch(e) {
+    errEl.textContent = e.message;
+    errEl.classList.add('show');
+    document.getElementById('btn-upload-label').textContent = 'Upload Lagu';
+    btn.disabled = false;
+    statusEl.classList.remove('show');
+  }
+});
+
+// ── Delete song ──
+async function deleteSong(id, idx) {
+  if (!confirm('Hapus lagu ini dari playlist?')) return;
+  const { error } = await db.from('songs').delete().eq('id', id);
+  if (error) { toast('Gagal menghapus: ' + error.message); return; }
+  if (idx === currentIndex) {
+    audio.pause(); setPlayState(false);
+    currentIndex = -1;
+    songTitle.textContent = 'Pilih lagu untuk diputar';
+    songArtist.textContent = '—';
+    coverImg.style.display = 'none';
+    coverPlaceholder.style.display = 'flex';
+    bgBlur.style.backgroundImage = 'none';
+  } else if (idx < currentIndex) currentIndex--;
+  toast('Lagu dihapus');
+  await loadSongs();
+}
+
+// ── Close modals on overlay click ──
+document.getElementById('login-modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeLogin(); });
+document.getElementById('dashboard-modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeDashboard(); });
+
+// ── Init ──
+loadSongs();
+drawVisualizer();
+</script>
+</body>
+</html>
