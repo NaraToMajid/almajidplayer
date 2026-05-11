@@ -14,7 +14,6 @@ let audioCtx = null;
 let analyser = null;
 let source = null;
 let animFrameId = null;
-let isAudioConnected = false;
 
 const DEV_NAME = 'almajidnafi';
 const DEV_PASS = 'Rantauprapat123';
@@ -41,7 +40,7 @@ const visualizerWrap = document.getElementById('visualizer-wrap');
 const btnPlayPause = document.getElementById('btn-play-pause');
 const volSlider = document.getElementById('volume-slider');
 
-// Set volume awal ke 70% dan pastikan tidak mute
+// Set volume awal ke 70%
 audio.volume = 0.7;
 volSlider.value = 70;
 updateVolumeBackground(70);
@@ -51,9 +50,8 @@ function updateVolumeBackground(val) {
 }
 
 // ── Visualizer Setup ──
-const BAR_COUNT = 32;
+const BAR_COUNT = 28;
 const visBars = [];
-visualizerWrap.innerHTML = '';
 for (let i = 0; i < BAR_COUNT; i++) {
   const bar = document.createElement('div');
   bar.className = 'vis-bar';
@@ -62,97 +60,23 @@ for (let i = 0; i < BAR_COUNT; i++) {
   visBars.push(bar);
 }
 
-// ── Inisialisasi AudioContext (ONLY untuk visualizer, TIDAK mengganggu audio) ──
-async function initVisualizerContext() {
-  if (audioCtx && audioCtx.state !== 'closed') return true;
-  
-  try {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 256;
-    analyser.smoothingTimeConstant = 0.4;
-    console.log("Visualizer AudioContext created");
-    return true;
-  } catch (e) {
-    console.error("Failed to init visualizer context:", e);
-    return false;
-  }
-}
-
-// ── Hubungkan audio ke visualizer (TANPA mengganggu playback) ──
-async function connectAudioToVisualizer() {
-  if (isAudioConnected) return true;
-  if (!audioCtx || audioCtx.state === 'closed') {
-    await initVisualizerContext();
-  }
-  
-  try {
-    // Putuskan koneksi lama jika ada
-    if (source) {
-      try { source.disconnect(); } catch(e) {}
-    }
-    
-    // Buat koneksi baru
-    source = audioCtx.createMediaElementSource(audio);
-    source.connect(analyser);
-    analyser.connect(audioCtx.destination);
-    isAudioConnected = true;
-    console.log("Audio connected to visualizer - SUARA TETAP KELUAR");
-    return true;
-  } catch (e) {
-    console.error("Failed to connect visualizer:", e);
-    return false;
-  }
-}
-
-// ── Visualizer Real-time (Berdasarkan frekuensi lagu) ──
-function drawVisualizer() {
-  if (!animFrameId) {
-    animFrameId = requestAnimationFrame(drawVisualizer);
-  }
-  
-  // Jika lagu tidak diputar, tampilkan animasi diam
-  if (!isPlaying || !analyser) {
+// ── VISUALIZER TANPA AUDIOCONTEXT (simple) ──
+function drawSimpleVisualizer() {
+  if (!isPlaying) {
     for (let i = 0; i < BAR_COUNT; i++) {
       visBars[i].style.height = '3px';
-      visBars[i].style.opacity = '0.3';
     }
+    animFrameId = requestAnimationFrame(drawSimpleVisualizer);
     return;
   }
   
-  try {
-    const dataArray = new Uint8Array(analyser.frequencyBinCount);
-    analyser.getByteFrequencyData(dataArray);
-    
-    for (let i = 0; i < BAR_COUNT; i++) {
-      // Mapping index untuk distribusi yang merata
-      const index = Math.floor(Math.pow(i / BAR_COUNT, 1.1) * dataArray.length);
-      const value = dataArray[Math.min(index, dataArray.length - 1)] || 0;
-      
-      // Tinggi bar berdasarkan volume (3px - 55px)
-      let height = 3 + (value / 255) * 52;
-      height = Math.min(55, Math.max(3, height));
-      
-      // Warna berdasarkan intensitas
-      const intensity = value / 255;
-      if (intensity > 0.7) {
-        visBars[i].style.background = '#ff6b9d';
-      } else if (intensity > 0.3) {
-        visBars[i].style.background = '#c8ff00';
-      } else {
-        visBars[i].style.background = '#00ffd2';
-      }
-      
-      visBars[i].style.height = height + 'px';
-      visBars[i].style.opacity = 0.4 + (intensity * 0.6);
-    }
-  } catch (e) {
-    console.error("Visualizer draw error:", e);
+  // Animasi random untuk visualizer saat lagu diputar
+  for (let i = 0; i < BAR_COUNT; i++) {
+    const randomHeight = 3 + Math.random() * 40;
+    visBars[i].style.height = randomHeight + 'px';
   }
+  animFrameId = requestAnimationFrame(drawSimpleVisualizer);
 }
-
-// Mulai visualizer
-drawVisualizer();
 
 // ── Helper Functions ──
 function fmt(seconds) {
@@ -254,7 +178,7 @@ function escapeHtml(str) {
   });
 }
 
-// ── MAIN PLAY FUNCTION (SUARA PASTI KELUAR) ──
+// ── MAIN PLAY FUNCTION (DIRECT, TANPA AUDIOCONTEXT DULU) ──
 async function playSong(idx) {
   if (idx < 0 || idx >= songs.length) return;
   
@@ -263,18 +187,20 @@ async function playSong(idx) {
   
   if (!song.audio_url) {
     toast("❌ File audio tidak ditemukan!");
+    console.error("No audio_url:", song);
     return;
   }
   
-  console.log("Memutar:", song.title);
+  console.log("Memutar:", song.title, "URL:", song.audio_url);
   
   // Hentikan audio yang sedang berjalan
   audio.pause();
-  isAudioConnected = false;
   
   // Set source baru
   audio.src = song.audio_url;
   audio.volume = volSlider.value / 100;
+  
+  // Load audio
   audio.load();
   
   // Update tampilan cover
@@ -291,47 +217,33 @@ async function playSong(idx) {
   
   songTitle.textContent = song.title;
   songArtist.textContent = song.artist || '—';
+  
   renderPlaylist();
   
-  // Fungsi untuk memutar audio
-  const startPlayback = async () => {
+  // Tunggu audio siap lalu play
+  audio.oncanplay = async () => {
     try {
-      // Inisialisasi visualizer context (TIDAK mengganggu suara)
-      await initVisualizerContext();
+      // Reset AudioContext jika perlu
+      if (audioCtx) {
+        if (audioCtx.state === 'suspended') {
+          await audioCtx.resume();
+        }
+      }
       
-      // Mainkan audio langsung (tanpa menunggu visualizer)
       await audio.play();
       setPlayState(true);
-      
-      // Setelah audio play, sambungkan ke visualizer (opsional)
-      setTimeout(() => {
-        connectAudioToVisualizer().catch(e => console.log("Visualizer optional:", e));
-      }, 100);
-      
       toast(`🎵 Memutar: ${song.title}`);
     } catch (err) {
       console.error("Play error:", err);
-      toast("⚠️ Klik tombol play lagi");
+      toast("⚠️ Klik tombol play (browser membutuhkan interaksi)");
       setPlayState(false);
     }
   };
   
-  // Jika audio sudah siap, langsung play
-  if (audio.readyState >= 2) {
-    await startPlayback();
-  } else {
-    audio.oncanplay = startPlayback;
-    // Timeout fallback
-    setTimeout(() => {
-      if (!isPlaying) startPlayback();
-    }, 2000);
-  }
-  
-  // Error handler
-  audio.onerror = () => {
-    console.error("Audio error");
-    toast("❌ Gagal memutar file");
-    setPlayState(false);
+  // Error handling
+  audio.onerror = (e) => {
+    console.error("Audio error:", e);
+    toast("❌ Gagal memutar file audio. Coba upload ulang.");
   };
 }
 
@@ -342,11 +254,6 @@ function setPlayState(playing) {
     iconPause.style.display = 'block';
     coverDisc.classList.add('spinning');
     coverRing.classList.add('spinning');
-    
-    // Resume AudioContext untuk visualizer
-    if (audioCtx && audioCtx.state === 'suspended') {
-      audioCtx.resume();
-    }
   } else {
     iconPlay.style.display = 'block';
     iconPause.style.display = 'none';
@@ -354,6 +261,7 @@ function setPlayState(playing) {
     coverRing.classList.remove('spinning');
   }
   
+  // Update class di playlist
   document.querySelectorAll('.playlist-item').forEach((el, i) => {
     if (i === currentIndex) {
       if (!playing) el.classList.add('paused');
@@ -374,17 +282,15 @@ btnPlayPause.addEventListener('click', async () => {
     setPlayState(false);
   } else {
     try {
-      await audio.play();
-      setPlayState(true);
-      
-      // Sambungkan ke visualizer (opsional)
+      // Coba resume AudioContext
       if (audioCtx && audioCtx.state === 'suspended') {
         await audioCtx.resume();
       }
-      await connectAudioToVisualizer();
+      await audio.play();
+      setPlayState(true);
     } catch (err) {
       console.error("Resume error:", err);
-      toast("Klik sekali lagi");
+      toast("Klik sekali lagi untuk memutar");
     }
   }
 });
@@ -428,7 +334,7 @@ audio.addEventListener('ended', async () => {
   }
 });
 
-// Progress bar
+// Progress bar update
 audio.addEventListener('timeupdate', () => {
   if (!audio.duration || isNaN(audio.duration)) return;
   const pct = (audio.currentTime / audio.duration) * 100;
@@ -454,7 +360,7 @@ volSlider.addEventListener('input', () => {
   updateVolumeBackground(val);
 });
 
-// ── Login / Dashboard (Sama seperti sebelumnya) ──
+// ── Login / Dashboard ──
 document.getElementById('btn-add-music').addEventListener('click', () => {
   if (isLoggedIn) openDashboard();
   else document.getElementById('login-modal').classList.add('open');
@@ -609,6 +515,18 @@ async function deleteSong(id, idx) {
 document.getElementById('login-modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeLogin(); });
 document.getElementById('dashboard-modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeDashboard(); });
 
+// TEST: Buat elemen audio test untuk memastikan audio bisa diputar
+function testAudioPlayback() {
+  const testAudio = new Audio();
+  testAudio.volume = 0.5;
+  console.log("Audio API tersedia:", !!Audio);
+  toast("🎧 Klik lagu di playlist untuk memutar");
+}
+
 // Initialize
 loadSongs();
-console.log("✅ Aplikasi siap - SUARA akan keluar saat play!");
+drawSimpleVisualizer(); // Pake visualizer simple tanpa AudioContext
+testAudioPlayback();
+
+// Log untuk debugging
+console.log("Aplikasi siap, volume:", audio.volume);
