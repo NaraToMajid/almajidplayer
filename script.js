@@ -1,6 +1,6 @@
 // ── Supabase Configuration ──
 const SUPABASE_URL = 'https://mqonelsoqyvrasrzrzfl.supabase.co';
-const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xb25lbHNvcXl2cmFzcnpyemZsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU5NjEzOTQsImV4cCI6MjA4MTUzNzM5NH0.exHvN0BA3P71DcZbavZ0DMk8pUEpWQ6VCuH672wEdJ4';
+const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xb25lbHNvcXl2cmFzcnpyemZsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU5NjEzOTQsImV4cCI6MjA4MTUzNzM5NH0.exHvN0BA3P71DcZbZavZ0DMk8pUEpWQ6VCuH672wEdJ4';
 const { createClient } = supabase;
 const db = createClient(SUPABASE_URL, SUPABASE_ANON);
 
@@ -14,6 +14,7 @@ let audioCtx = null;
 let analyser = null;
 let source = null;
 let animFrameId = null;
+let isAudioContextReady = false;
 
 const DEV_NAME = 'almajidnafi';
 const DEV_PASS = 'Rantauprapat123';
@@ -40,6 +41,10 @@ const visualizerWrap = document.getElementById('visualizer-wrap');
 const btnPlayPause = document.getElementById('btn-play-pause');
 const volSlider = document.getElementById('volume-slider');
 
+// Pastikan volume tidak 0
+audio.volume = 0.7;
+volSlider.value = 70;
+
 // ── Visualizer Setup ──
 const BAR_COUNT = 28;
 const visBars = [];
@@ -52,14 +57,32 @@ for (let i = 0; i < BAR_COUNT; i++) {
 }
 
 // ── Audio Context & Visualizer ──
-function initAudioCtx() {
-  if (audioCtx) return;
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  analyser = audioCtx.createAnalyser();
-  analyser.fftSize = 128;
-  source = audioCtx.createMediaElementSource(audio);
-  source.connect(analyser);
-  analyser.connect(audioCtx.destination);
+async function initAudioCtx() {
+  if (audioCtx && isAudioContextReady) return;
+  
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 128;
+    
+    // Hanya buat source jika audio belum memiliki source
+    if (!source && audio.src) {
+      source = audioCtx.createMediaElementSource(audio);
+      source.connect(analyser);
+      analyser.connect(audioCtx.destination);
+    }
+    isAudioContextReady = true;
+    console.log("AudioContext initialized");
+  } catch (e) {
+    console.error("Failed to init AudioContext:", e);
+  }
+}
+
+async function resumeAudioContext() {
+  if (audioCtx && audioCtx.state === 'suspended') {
+    await audioCtx.resume();
+    console.log("AudioContext resumed");
+  }
 }
 
 function drawVisualizer() {
@@ -104,6 +127,12 @@ async function loadSongs() {
     if (error) throw error;
     songs = data || [];
     renderPlaylist();
+    
+    // Debug: tampilkan daftar lagu ke console
+    console.log("Songs loaded:", songs);
+    if (songs.length === 0) {
+      toast("Belum ada lagu. Klik Add Music untuk upload!");
+    }
   } catch (e) {
     console.error(e);
     playlistContainer.innerHTML = '<div class="loading-state">❌ Gagal memuat. Cek koneksi.</div>';
@@ -173,12 +202,23 @@ function escapeHtml(str) {
   });
 }
 
-// ── Play Song & Ensure Audio Works ──
-function playSong(idx) {
+// ── Play Song with proper audio handling ──
+async function playSong(idx) {
   if (idx < 0 || idx >= songs.length) return;
+  
   currentIndex = idx;
   const song = songs[idx];
   
+  // Cek apakah audio_url valid
+  if (!song.audio_url) {
+    toast("❌ File audio tidak ditemukan!");
+    console.error("No audio_url for song:", song);
+    return;
+  }
+  
+  console.log("Playing song:", song.title, "URL:", song.audio_url);
+  
+  // Set source audio
   audio.src = song.audio_url;
   audio.volume = volSlider.value / 100;
   audio.load();
@@ -198,13 +238,32 @@ function playSong(idx) {
   songTitle.textContent = song.title;
   songArtist.textContent = song.artist || '—';
   
-  initAudioCtx();
-  if (audioCtx && audioCtx.state === 'suspended') {
-    audioCtx.resume().then(() => {
-      audio.play().then(() => setPlayState(true)).catch(e => console.log("Playback error:", e));
-    });
-  } else {
-    audio.play().then(() => setPlayState(true)).catch(e => console.log("Auto-play blocked, user interaction needed:", e));
+  // Tunggu audio siap
+  await new Promise(resolve => {
+    if (audio.readyState >= 2) resolve();
+    else audio.addEventListener('canplay', resolve, { once: true });
+  });
+  
+  // Inisialisasi AudioContext
+  await initAudioCtx();
+  await resumeAudioContext();
+  
+  // Reconnect source jika diperlukan (karena src berubah)
+  if (audioCtx && !source) {
+    source = audioCtx.createMediaElementSource(audio);
+    source.connect(analyser);
+    analyser.connect(audioCtx.destination);
+  }
+  
+  // Mainkan audio
+  try {
+    await audio.play();
+    setPlayState(true);
+    toast(`🎵 Memutar: ${song.title}`);
+  } catch (err) {
+    console.error("Play error:", err);
+    toast("⚠️ Klik tombol play untuk memutar (interaksi user diperlukan)");
+    setPlayState(false);
   }
   
   renderPlaylist();
@@ -233,34 +292,41 @@ function setPlayState(playing) {
 }
 
 // ── Player Controls ──
-btnPlayPause.addEventListener('click', () => {
+btnPlayPause.addEventListener('click', async () => {
   if (currentIndex === -1 && songs.length > 0) {
-    playSong(0);
+    await playSong(0);
     return;
   }
+  
   if (isPlaying) {
     audio.pause();
     setPlayState(false);
   } else {
-    if (audioCtx) audioCtx.resume();
-    audio.play().then(() => setPlayState(true)).catch(e => toast("Klik tombol play lagi"));
+    await resumeAudioContext();
+    try {
+      await audio.play();
+      setPlayState(true);
+    } catch (err) {
+      console.error("Play resume error:", err);
+      toast("Klik play lagi untuk memutar");
+    }
   }
 });
 
-document.getElementById('btn-next').addEventListener('click', () => {
+document.getElementById('btn-next').addEventListener('click', async () => {
   if (songs.length === 0) return;
   let next = isShuffle ? Math.floor(Math.random() * songs.length) : (currentIndex + 1) % songs.length;
-  playSong(next);
+  await playSong(next);
 });
 
-document.getElementById('btn-prev').addEventListener('click', () => {
+document.getElementById('btn-prev').addEventListener('click', async () => {
   if (songs.length === 0) return;
   if (audio.currentTime > 3) {
     audio.currentTime = 0;
     return;
   }
   const prev = (currentIndex - 1 + songs.length) % songs.length;
-  playSong(prev);
+  await playSong(prev);
 });
 
 document.getElementById('btn-shuffle').addEventListener('click', () => {
@@ -275,14 +341,14 @@ document.getElementById('btn-repeat').addEventListener('click', () => {
   toast(isRepeat ? '🔁 Ulang satu lagu' : '➡️ Ulang nonaktif');
 });
 
-audio.addEventListener('ended', () => {
+audio.addEventListener('ended', async () => {
   if (isRepeat) {
     audio.currentTime = 0;
-    audio.play();
+    await audio.play();
   } else {
     if (songs.length === 0) return;
     let next = isShuffle ? Math.floor(Math.random() * songs.length) : (currentIndex + 1) % songs.length;
-    playSong(next);
+    await playSong(next);
   }
 });
 
@@ -306,6 +372,16 @@ volSlider.addEventListener('input', () => {
   const val = volSlider.value;
   audio.volume = val / 100;
   volSlider.style.background = `linear-gradient(to right, var(--accent) 0%, var(--accent) ${val}%, var(--surface2) ${val}%)`;
+});
+
+// Debug audio events
+audio.addEventListener('error', (e) => {
+  console.error("Audio error:", e);
+  toast("❌ Gagal memutar audio. Cek file MP3.");
+});
+
+audio.addEventListener('canplay', () => {
+  console.log("Audio can play");
 });
 
 // ── Login / Dashboard ──
@@ -402,7 +478,7 @@ document.getElementById('btn-upload').addEventListener('click', async () => {
     const mp3Ext = mp3File.name.split('.').pop();
     const mp3Path = `audio/${Date.now()}_${Math.random().toString(36).slice(2)}.${mp3Ext}`;
     const { error: mp3Err } = await db.storage.from('songs').upload(mp3Path, mp3File, { contentType: mp3File.type });
-    if (mp3Err) throw new Error('Upload audio gagal');
+    if (mp3Err) throw new Error('Upload audio gagal: ' + mp3Err.message);
     const { data: mp3Data } = db.storage.from('songs').getPublicUrl(mp3Path);
     const audioUrl = mp3Data.publicUrl;
     
@@ -420,7 +496,7 @@ document.getElementById('btn-upload').addEventListener('click', async () => {
     
     statusEl.textContent = 'Simpan ke database...';
     const { error: dbErr } = await db.from('songs').insert([{ title, artist: artist || null, audio_url: audioUrl, cover_url: coverUrl }]);
-    if (dbErr) throw new Error('Gagal simpan data');
+    if (dbErr) throw new Error('Gagal simpan data: ' + dbErr.message);
     
     statusEl.textContent = '✅ Lagu berhasil ditambahkan!';
     toast('Lagu berhasil ditambahkan');
@@ -458,6 +534,14 @@ async function deleteSong(id, idx) {
   await loadSongs();
 }
 
+// Resume audio context on user interaction (tap anywhere)
+document.body.addEventListener('click', async () => {
+  if (audioCtx && audioCtx.state === 'suspended') {
+    await resumeAudioContext();
+    console.log("AudioContext resumed by user interaction");
+  }
+}, { once: true });
+
 // Close modals on overlay click
 document.getElementById('login-modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeLogin(); });
 document.getElementById('dashboard-modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeDashboard(); });
@@ -465,3 +549,10 @@ document.getElementById('dashboard-modal').addEventListener('click', e => { if (
 // Initialize
 loadSongs();
 drawVisualizer();
+
+// Tampilkan pesan jika belum ada lagu
+setTimeout(() => {
+  if (songs.length === 0) {
+    toast("Belum ada lagu. Klik Add Music untuk upload MP3!");
+  }
+}, 1000);
